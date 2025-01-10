@@ -8,9 +8,24 @@ from atproto import CAR, AtUri, FirehoseSubscribeReposClient, firehose_models, m
 
 counters = collections.Counter()
 timer_start = time.time()
-file_handle = open('post_data.log', 'a')
+file_handle = None
+curr_file_num = 0
+curr_records_in_file = 0
+MAX_RECORDS_PER_FILE = 100000
 
-MAX_RECORDS = 10000
+def get_new_file():
+    global file_handle, curr_file_num, curr_records_in_file
+
+    print('Reached max records. Creating new file...')
+
+    if file_handle:
+        file_handle.close()
+    
+    curr_file_num += 1 
+    filename = f'post_data_{curr_file_num}.log'
+    file_handle = open(filename, "a")
+    curr_records_in_file = 0
+
 
 def increment_counter(counter_name: str) -> None:
     counters[counter_name] += 1
@@ -19,6 +34,11 @@ def increment_counter(counter_name: str) -> None:
         
 
 def on_message_handler(message: firehose_models.MessageFrame) -> None:
+    global curr_records_in_file
+
+    if not file_handle:
+        get_new_file()
+
     increment_counter('messages_received')
 
     commit = parse_subscribe_repos_message(message)
@@ -44,9 +64,15 @@ def on_message_handler(message: firehose_models.MessageFrame) -> None:
             file_handle.flush()
 
             increment_counter('records_written')
-            if counters['records_written'] >= MAX_RECORDS:
-                print('Reached max records. Shutting down...')
-                client.stop()
+            curr_records_in_file += 1
 
+            if curr_records_in_file >= MAX_RECORDS_PER_FILE:
+                get_new_file()
+
+                
 client = FirehoseSubscribeReposClient()
-client.start(on_message_handler)
+try:
+    client.start(on_message_handler)
+finally:
+    if file_handle:
+        file_handle.close()
